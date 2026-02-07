@@ -1,3 +1,10 @@
+# Archrock Playwright Regression Test Workflow
+# 
+# Email Recipients Configuration:
+# - default: Standard QA team members
+# - project-specific: Project stakeholders and managers
+# - custom: User-defined email addresses
+
 name: Archrock - Regression
 
 on:
@@ -22,11 +29,10 @@ on:
         options:
           - default
           - project-specific
-          - executor
           - custom
 
       custom_email:
-        description: 'Custom email address (comma separated if multiple) - Only used when "custom" is selected'
+        description: 'Custom email address (comma separated if multiple) - REQUIRED when "custom" is selected'
         required: false
         type: string
         default: ''
@@ -58,63 +64,66 @@ jobs:
           $envSelected = "${{ github.event.inputs.environment }}"
           if ([string]::IsNullOrWhiteSpace($envSelected)) { $envSelected = 'dev' }
 
-          # Set basic environment variables
           "ENV=$envSelected" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "TEST_SUITE=ArchRock Regression" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          
-          # Email configuration based on user selection
+
+          # Configure email recipients based on selection
           $emailConfig = "${{ github.event.inputs.email_config }}"
+          $finalEmailList = ""
           
-          # Default recipients (always available)
-          $defaultEmails = "vishnu761060@mastek.com,anagha15391@mastek.com"
-          
-          # Project-specific recipients
-          $projectEmails = "gokul1503875@mastek.com,kunal163486@mastek.com"
-          
-          # Executor email
-          $executorEmail = "${{ github.actor }}@mastek.com"
-          
-          # Custom email from input
-          $customEmail = "${{ github.event.inputs.custom_email }}"
-          
-          # Set recipients based on email_config selection
           switch ($emailConfig) {
             'default' {
-              "EMAIL_RECIPIENTS_DEFAULT=$defaultEmails" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-              "EMAIL_RECIPIENTS_PROJECT=" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-              "EMAIL_RECIPIENTS_EXECUTOR=" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+              # Default QA team members
+              $finalEmailList = "vishnu761060@mastek.com,anagha15391@mastek.com,gokul1503875@mastek.com,kunal163486@mastek.com"
+              Write-Host "Using default recipients"
             }
             'project-specific' {
-              "EMAIL_RECIPIENTS_DEFAULT=$defaultEmails" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-              "EMAIL_RECIPIENTS_PROJECT=$projectEmails" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-              "EMAIL_RECIPIENTS_EXECUTOR=" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-            }
-            'executor' {
-              "EMAIL_RECIPIENTS_DEFAULT=$defaultEmails" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-              "EMAIL_RECIPIENTS_PROJECT=" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-              "EMAIL_RECIPIENTS_EXECUTOR=$executorEmail" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+              # Project stakeholders and managers
+              $finalEmailList = "project.manager@mastek.com,tech.lead@mastek.com,stakeholder@mastek.com"
+              Write-Host "Using project-specific recipients"
             }
             'custom' {
-              "EMAIL_RECIPIENTS_DEFAULT=$defaultEmails" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-              "EMAIL_RECIPIENTS_PROJECT=$customEmail" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-              "EMAIL_RECIPIENTS_EXECUTOR=" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+              # Custom email addresses provided by user
+              $customEmails = "${{ github.event.inputs.custom_email }}"
+              if ([string]::IsNullOrWhiteSpace($customEmails)) {
+                throw "Custom email configuration selected but no email addresses provided. Please provide at least one email address."
+              }
+              # Clean and validate emails
+              $emailList = $customEmails.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+              if ($emailList.Count -eq 0) {
+                throw "No valid email addresses found in custom email input. Please provide at least one valid email address."
+              }
+              $finalEmailList = $emailList -join ','
+              Write-Host "Using custom recipients"
             }
             default {
-              "EMAIL_RECIPIENTS_DEFAULT=$defaultEmails" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-              "EMAIL_RECIPIENTS_PROJECT=" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-              "EMAIL_RECIPIENTS_EXECUTOR=" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+              throw "Invalid email configuration: '$emailConfig'"
             }
           }
+          
+          # Validate at least one recipient exists
+          if ([string]::IsNullOrWhiteSpace($finalEmailList)) {
+            throw "No email recipients configured."
+          }
+          
+          Write-Host "Final recipient list: $finalEmailList"
+          $recipientCount = ($finalEmailList.Split(',')).Count
+          Write-Host "Total recipients: $recipientCount"
+          "OUTLOOK_TO_EMAIL=$finalEmailList" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Create file with environment-based secret
         env:
           DEV_ENVFILE: ${{ secrets.DEV_SECRET }}
           QA_ENVFILE:  ${{ secrets.QA_SECRET }}
+          STAGING_ENVFILE: ${{ secrets.STAGING_SECRET }}
+          PRODUCTION_ENVFILE: ${{ secrets.PRODUCTION_SECRET }}
         run: |
           $envName = $env:ENV
           switch ($envName) {
             'dev' { $secret = $env:DEV_ENVFILE }
             'qa'  { $secret = $env:QA_ENVFILE }
+            'staging' { $secret = $env:STAGING_ENVFILE }
+            'production' { $secret = $env:PRODUCTION_ENVFILE }
             default { throw "Unknown ENV: '$envName'" }
           }
 
@@ -151,12 +160,22 @@ jobs:
         env:
           LINK_TO_RESULTS_URL: ${{ env.LINK_TO_RESULTS_URL }}
         run: |
-          if ($env:ENV -eq 'dev') {
-            npm run archRockDevRegression
-          } elseif ($env:ENV -eq 'qa') {
-            npm run archRockQaRegression
-          } else {
-            throw "Unknown ENV '$env:ENV'"
+          switch ($env:ENV) {
+            'dev' {
+              npm run archRockDevRegression
+            }
+            'qa' {
+              npm run archRockQaRegression
+            }
+            'staging' {
+              npm run archRockStagingRegression
+            }
+            'production' {
+              npm run archRockProductionRegression
+            }
+            default {
+              throw "Unknown ENV '$env:ENV'"
+            }
           }
 
       - name: Upload Playwright report
@@ -172,9 +191,6 @@ jobs:
         env:
           OUTLOOK_EMAIL: ${{ secrets.OUTLOOK_EMAIL }}
           OUTLOOK_PASSWORD: ${{ secrets.OUTLOOK_PASSWORD }}
-          EMAIL_RECIPIENTS_DEFAULT: ${{ env.EMAIL_RECIPIENTS_DEFAULT }}
-          EMAIL_RECIPIENTS_PROJECT: ${{ env.EMAIL_RECIPIENTS_PROJECT }}
-          EMAIL_RECIPIENTS_EXECUTOR: ${{ env.EMAIL_RECIPIENTS_EXECUTOR }}
           OUTLOOK_TO_EMAIL: ${{ env.OUTLOOK_TO_EMAIL }}
           LINK_TO_RESULTS_URL: ${{ env.LINK_TO_RESULTS_URL }}
           ENV_SELECTED: "${{ github.event.inputs.environment }} Reports"
